@@ -2,44 +2,79 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import StreamingResponse
 import numpy as np
 import cv2
-import io
-
-from utils import extract_face, seamless_clone
+import dlib
+from io import BytesIO
 
 app = FastAPI()
 
-def read_image(file):
-    """读取上传的图片"""
-    image = np.frombuffer(file.file.read(), np.uint8)
-    image = cv2.imdecode(image, cv2.IMREAD_COLOR)
-    return image
+# 人脸检测器和关键点预测器
+detector = dlib.get_frontal_face_detector()
+predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+
+def get_landmarks(image):
+    faces = detector(image, 1)
+    if len(faces) == 0:
+        raise ValueError("No face detected in the image.")
+    return np.matrix([[p.x, p.y] for p in predictor(image, faces[0]).parts()])
+
+def transformation_from_points(points1, points2):
+    points1 = points1.astype(np.float64)
+    points2 = points2.astype(np.float64)
+    c1 = np.mean(points1, axis=0)
+    c2 = np.mean(points2, axis=0)
+    points1 -= c1
+    points2 -= c2
+    s1 = np.std(points1)
+    s2 = np.std(points2)
+    points1 /= s1
+    points2 /= s2
+    U, S, Vt = np.linalg.svd(points1.T * points2)
+    R = (U * Vt).T
+    return np.vstack([
+        np.hstack(((s2 / s1) * R, c2.T - (s2 / s1) * R @ c1.T)),
+        np.matrix([0., 0., 1.])
+    ])
+
+def warp_image(image, M, dshape):
+    output = np.zeros(dshape, dtype=image.dtype)
+    cv2.warpAffine(
+        image,
+        M[:2],
+        (dshape[1], dshape[0]),
+        dst=output,
+        borderMode=cv2.BORDER_TRANSPARENT,
+        flags=cv2.WARP_INVERSE_MAP
+    )
+    return output
+
+def face_blend(img1, img2, alpha=0.5):
+    landmarks1 = get_landmarks(img1)
+    landmarks2 = get_landmarks(img2)
+    mean_landmarks = (1 - alpha) * landmarks1 + alpha * landmarks2
+    M1 = transformation_from_points(mean_landmarks, landmarks1)
+    M2 = transformation_from_points(mean_landmarks, landmarks2)
+    warped_img1 = warp_image(img1, M1, img1.shape)
+    warped_img2 = warp_image(img2, M2, img2.shape)
+    output = cv2.addWeighted(warped_img1, 0.5, warped_img2, 0.5, 0)
+    return output
 
 @app.post("/blend_faces/")
 async def blend_faces(file1: UploadFile = File(...), file2: UploadFile = File(...)):
-    img1 = read_image(file1)
-    img2 = read_image(file2)
+    contents1 = await file1.read()
+    contents2 = await file2.read()
+
+    nparr1 = np.frombuffer(contents1, np.uint8)
+    nparr2 = np.frombuffer(contents2, np.uint8)
+    img1 = cv2.imdecode(nparr1, cv2.IMREAD_COLOR)
+    img2 = cv2.imdecode(nparr2, cv2.IMREAD_COLOR)
 
     if img1 is None or img2 is None:
-        return {"error": "无法读取上传的图片"}
+        return {"error": "Invalid image upload."}
 
-    # 提取两张脸
-    mask1, face1 = extract_face(img1)
-    mask2, face2 = extract_face(img2)
+    try:
+        result_img = face_blend(img1, img2)
+    except Exception as e:
+        return {"error": str(e)}
 
-    if face1 is None or face2 is None:
-        return {"error": "未检测到人脸，请上传正面清晰的人像照片"}
-
-    # 缩放第二张脸到第一张脸大小
-    face2_resized = cv2.resize(face2, (face1.shape[1], face1.shape[0]))
-    mask2_resized = cv2.resize(mask2, (face1.shape[1], face1.shape[0]))
-
-    # 融合两张脸
-    blended = cv2.addWeighted(face1, 0.5, face2_resized, 0.5, 0)
-
-    # 把融合后的脸无缝克隆到白色背景
-    background = np.full_like(face1, 255)
-    output = seamless_clone(blended, mask1, background)
-
-    # 编码成JPEG返回
-    _, img_encoded = cv2.imencode('.jpg', output)
-    return StreamingResponse(io.BytesIO(img_encoded.tobytes()), media_type="image/jpeg")
+    _, encoded_img = cv2.imencode(".jpg", result_img)
+    return StreamingResponse(BytesIO(encoded_img.tobytes()), media_type="image/jpeg")
