@@ -1,20 +1,32 @@
 import cv2
 import numpy as np
+import mediapipe as mp
 
-def crop_face(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-    if len(faces) == 0:
-        return img  # 没找到脸就原图返回
-    x, y, w, h = faces[0]
-    face = img[y:y+h, x:x+w]
-    face = cv2.resize(face, (300, 300))
-    return face
+mp_face_mesh = mp.solutions.face_mesh
 
-def seamless_clone_face(face):
-    background = np.full((500, 500, 3), 255, dtype=np.uint8)
-    center = (250, 250)
-    mask = 255 * np.ones(face.shape, face.dtype)
-    output = cv2.seamlessClone(face, background, mask, center, cv2.NORMAL_CLONE)
+def extract_face(image):
+    """提取图片中的人脸并返回mask和裁剪后的脸部图像"""
+    with mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1) as face_mesh:
+        results = face_mesh.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        if not results.multi_face_landmarks:
+            return None, None
+
+        h, w, _ = image.shape
+        mask = np.zeros((h, w), dtype=np.uint8)
+
+        for face_landmarks in results.multi_face_landmarks:
+            points = []
+            for landmark in face_landmarks.landmark:
+                x, y = int(landmark.x * w), int(landmark.y * h)
+                points.append((x, y))
+            points = np.array(points, np.int32)
+            cv2.fillConvexPoly(mask, points, 255)
+
+        face = cv2.bitwise_and(image, image, mask=mask)
+        return mask, face
+
+def seamless_clone(src_face, src_mask, dst_img):
+    """将src_face根据mask无缝融合到dst_img"""
+    center = (dst_img.shape[1] // 2, dst_img.shape[0] // 2)
+    output = cv2.seamlessClone(src_face, dst_img, src_mask, center, cv2.NORMAL_CLONE)
     return output
