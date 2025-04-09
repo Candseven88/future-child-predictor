@@ -22,8 +22,11 @@ def get_landmarks(image):
         return np.array(landmarks)
 
 def apply_affine_transform(src, src_tri, dst_tri, size):
-    # 防止空三角形 warpAffine崩溃
     if size[0] <= 0 or size[1] <= 0:
+        return np.zeros((size[1], size[0], 3), dtype=np.uint8)
+    if src is None or src.shape[0] == 0 or src.shape[1] == 0:
+        return np.zeros((size[1], size[0], 3), dtype=np.uint8)
+    if len(src.shape) != 3 or src.shape[2] != 3:
         return np.zeros((size[1], size[0], 3), dtype=np.uint8)
     warp_mat = cv2.getAffineTransform(np.float32(src_tri), np.float32(dst_tri))
     dst = cv2.warpAffine(src, warp_mat, (size[0], size[1]), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
