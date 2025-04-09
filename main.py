@@ -5,6 +5,7 @@ import cv2
 import mediapipe as mp
 from scipy.spatial import Delaunay
 from io import BytesIO
+from utils import crop_face, seamless_clone_face
 
 app = FastAPI()
 
@@ -23,10 +24,6 @@ def get_landmarks(image):
 
 def apply_affine_transform(src, src_tri, dst_tri, size):
     if size[0] <= 0 or size[1] <= 0:
-        return np.zeros((size[1], size[0], 3), dtype=np.uint8)
-    if src is None or src.shape[0] == 0 or src.shape[1] == 0:
-        return np.zeros((size[1], size[0], 3), dtype=np.uint8)
-    if len(src.shape) != 3 or src.shape[2] != 3:
         return np.zeros((size[1], size[0], 3), dtype=np.uint8)
     warp_mat = cv2.getAffineTransform(np.float32(src_tri), np.float32(dst_tri))
     dst = cv2.warpAffine(src, warp_mat, (size[0], size[1]), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
@@ -111,7 +108,11 @@ async def blend_faces(file1: UploadFile = File(...), file2: UploadFile = File(..
     if result is None:
         return {"error": "Could not detect faces in one or both images."}
 
-    _, buffer = cv2.imencode('.jpg', result)
+    # 美化处理
+    face = crop_face(result)
+    beautified = seamless_clone_face(face)
+
+    _, buffer = cv2.imencode('.jpg', beautified)
     io_buf = BytesIO(buffer)
 
     return StreamingResponse(io_buf, media_type="image/jpeg")
