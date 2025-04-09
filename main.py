@@ -22,6 +22,9 @@ def get_landmarks(image):
         return np.array(landmarks)
 
 def apply_affine_transform(src, src_tri, dst_tri, size):
+    # 防止空三角形 warpAffine崩溃
+    if size[0] <= 0 or size[1] <= 0:
+        return np.zeros((size[1], size[0], 3), dtype=np.uint8)
     warp_mat = cv2.getAffineTransform(np.float32(src_tri), np.float32(dst_tri))
     dst = cv2.warpAffine(src, warp_mat, (size[0], size[1]), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
     return dst
@@ -52,7 +55,9 @@ def morph_triangle(img1, img2, img, t1, t2, t, alpha=0.5):
     mask = np.zeros((r[3], r[2], 3), dtype=np.float32)
     cv2.fillConvexPoly(mask, np.int32(t_rect), (1.0, 1.0, 1.0), 16, 0)
 
-    img[r[1]:r[1]+r[3], r[0]:r[0]+r[2]] = img[r[1]:r[1]+r[3], r[0]:r[0]+r[2]] * (1 - mask) + img_rect * mask
+    img_part = img[r[1]:r[1]+r[3], r[0]:r[0]+r[2]]
+    img_part = img_part * (1 - mask) + img_rect * mask
+    img[r[1]:r[1]+r[3], r[0]:r[0]+r[2]] = img_part
 
 def morph_faces(img1, img2, alpha=0.5):
     points1 = get_landmarks(img1)
