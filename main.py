@@ -1,3 +1,21 @@
+import os
+import urllib.request
+
+# 检查模型文件是否存在，不存在就下载
+model_path = "shape_predictor_68_face_landmarks.dat"
+model_url = "http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2"
+
+if not os.path.isfile(model_path):
+    print("Model file not found, downloading...")
+    compressed_path = model_path + ".bz2"
+    urllib.request.urlretrieve(model_url, compressed_path)
+    import bz2
+    with bz2.BZ2File(compressed_path) as fr, open(model_path, "wb") as fw:
+        fw.write(fr.read())
+    os.remove(compressed_path)
+    print("Download and decompress finished.")
+
+
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import StreamingResponse
 import numpy as np
